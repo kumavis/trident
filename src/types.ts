@@ -7,7 +7,7 @@ export type QuickJsValue =
   | { [key: string]: QuickJsValue };
 
 export interface ForkableVm {
-  eval(code: string): Promise<QuickJsValue>;
+  eval(code: string): QuickJsValue;
   callFunction(name: string, ...args: QuickJsValue[]): Promise<QuickJsValue>;
   fork(): Promise<ForkableVm>;
   dispose(): Promise<void>;

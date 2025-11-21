@@ -42,7 +42,7 @@ export const vmBasicTestCases: VmTestCase[] = [
     name: "evaluates arithmetic expressions",
     async run() {
       await usingVm(() => createForkableVm(), async (vm) => {
-        const result = await vm.eval("1 + 2");
+        const result = vm.eval("1 + 2");
         ensureNumber(result, 3, "eval");
       });
     },
@@ -51,8 +51,8 @@ export const vmBasicTestCases: VmTestCase[] = [
     name: "maintains global state across eval calls",
     async run() {
       await usingVm(() => createForkableVm(), async (vm) => {
-        await vm.eval("globalThis.counter = 41; 0;");
-        const result = await vm.eval("globalThis.counter + 1");
+        vm.eval("globalThis.counter = 41; 0;");
+        const result = vm.eval("globalThis.counter + 1");
         ensureNumber(result, 42, "global state");
       });
     },
@@ -61,7 +61,7 @@ export const vmBasicTestCases: VmTestCase[] = [
     name: "callFunction invokes exported global functions",
     async run() {
       await usingVm(() => createForkableVm(), async (vm) => {
-        await vm.eval("globalThis.times = (a, b) => a * b; 0;");
+        vm.eval("globalThis.times = (a, b) => a * b; 0;");
         const value = await vm.callFunction("times", 6, 7);
         ensureNumber(value, 42, "callFunction");
       });
@@ -71,7 +71,7 @@ export const vmBasicTestCases: VmTestCase[] = [
     name: "createPreloadedVm executes bootstrap code",
     async run() {
       await usingVm(() => createPreloadedVm("globalThis.answer = 42;"), async (vm) => {
-        const value = await vm.eval("globalThis.answer");
+        const value = vm.eval("globalThis.answer");
         ensureValue(value, 42, "preloaded VM");
       });
     },

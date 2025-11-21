@@ -14,7 +14,7 @@ export async function createPreloadedVm(
 ): Promise<ForkableVm> {
   const vm = await createForkableVm(options);
   try {
-    await vm.eval(bootstrapCode);
+    vm.eval(bootstrapCode);
     return vm;
   } catch (error) {
     await vm.dispose();

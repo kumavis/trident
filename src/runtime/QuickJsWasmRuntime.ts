@@ -47,7 +47,7 @@ export class QuickJsWasmRuntime {
     }
   }
 
-  async evalUtf8(source: string): Promise<string> {
+  evalUtf8(source: string): string {
     return this.invokeWithString(source, (ptr, len) => {
       const errorCode = this.module._qjs_eval_utf8(ptr, len);
       if (errorCode !== 0) {
@@ -57,7 +57,7 @@ export class QuickJsWasmRuntime {
     });
   }
 
-  async callFunctionUtf8(functionName: string, argsJson: string): Promise<string> {
+  callFunctionUtf8(functionName: string, argsJson: string): string {
     return this.invokeWithString(functionName, (namePtr, nameLen) =>
       this.invokeWithString(argsJson, (argsPtr, argsLen) => {
         const errorCode = this.module._qjs_call_function(namePtr, nameLen, argsPtr, argsLen);

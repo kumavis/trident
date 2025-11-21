@@ -17,9 +17,9 @@ export class QuickJsForkableVm implements ForkableVm {
     return new QuickJsForkableVm(runtime, options);
   }
 
-  async eval(code: string): Promise<QuickJsValue> {
-    return this.withExclusiveAccess(async () => {
-      const json = await this.runtime.evalUtf8(code);
+  eval(code: string): QuickJsValue {
+    return this.withExclusiveAccessSync(() => {
+      const json = this.runtime.evalUtf8(code);
       return this.parseQuickJsValue(json);
     });
   }
@@ -48,9 +48,7 @@ export class QuickJsForkableVm implements ForkableVm {
   }
 
   private async withExclusiveAccess<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.disposed) {
-      throw new Error("VM has been disposed");
-    }
+    this.throwIfUnavailable();
     if (this.busy) {
       throw new Error("VM operation already in progress");
     }
@@ -59,6 +57,25 @@ export class QuickJsForkableVm implements ForkableVm {
       return await fn();
     } finally {
       this.busy = false;
+    }
+  }
+
+  private withExclusiveAccessSync<T>(fn: () => T): T {
+    this.throwIfUnavailable();
+    if (this.busy) {
+      throw new Error("VM operation already in progress");
+    }
+    this.busy = true;
+    try {
+      return fn();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private throwIfUnavailable(): void {
+    if (this.disposed) {
+      throw new Error("VM has been disposed");
     }
   }
 
