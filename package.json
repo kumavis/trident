@@ -1,0 +1,58 @@
+{
+  "name": "trident",
+  "version": "1.0.0",
+  "description": "Forkable QuickJS WebAssembly engine (browser + Node) – scaffolding",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test:dev:node": "nodemon --watch src --watch tests --ext ts,mts,cts,js,mjs --exec \"node --test --experimental-strip-types tests/node/**/*.test.ts\"",
+    "test:dev:browser": "nodemon --watch src --watch tests --watch wasm --ext ts,mts,cts,js,mjs --exec \"web-test-runner --config web-test-runner.config.mjs\"",
+    "test:dev": "nodemon --watch src --watch tests --watch wasm --ext ts,mts,cts,js,mjs --exec \"npm run test:node && npm run test:browser\"",
+    "test:node": "node --test --experimental-strip-types tests/node/**/*.test.ts",
+    "test:browser": "web-test-runner --config web-test-runner.config.mjs",
+    "test": "npm run test:node && npm run test:browser"
+  },
+  "keywords": [
+    "quickjs",
+    "fork",
+    "wasm",
+    "vm"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@jitl/quickjs-ffi-types": "^0.31.0",
+    "@jitl/quickjs-wasmfile-release-sync": "^0.31.0",
+    "quickjs-emscripten-core": "^0.31.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@typescript-eslint/eslint-plugin": "^8.47.0",
+    "@typescript-eslint/parser": "^8.47.0",
+    "@web/dev-server-esbuild": "^1.0.4",
+    "@web/test-runner": "^0.20.2",
+    "@web/test-runner-playwright": "^0.11.1",
+    "esbuild": "^0.27.0",
+    "eslint": "^9.39.1",
+    "nodemon": "^3.1.11",
+    "prettier": "^3.6.2",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}
