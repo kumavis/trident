@@ -15,7 +15,7 @@
     "baseUrl": "./src",
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "tsup.config.ts"],
   "exclude": ["dist", "node_modules"]
 }
 

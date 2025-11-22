@@ -8,12 +8,10 @@ export type QuickJsValue =
 
 export interface ForkableVm {
   eval(code: string): QuickJsValue;
-  callFunction(name: string, ...args: QuickJsValue[]): Promise<QuickJsValue>;
+  callFunction(name: string, ...args: QuickJsValue[]): QuickJsValue;
   fork(): Promise<ForkableVm>;
-  dispose(): Promise<void>;
+  dispose(): void;
 }
 
-export interface CreateVmOptions {
-  // Placeholder for future configuration (stdlib toggles, preload scripts, etc.)
-}
+export type CreateVmOptions = Record<string, never>;
 

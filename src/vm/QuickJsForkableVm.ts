@@ -24,16 +24,16 @@ export class QuickJsForkableVm implements ForkableVm {
     });
   }
 
-  async callFunction(name: string, ...args: QuickJsValue[]): Promise<QuickJsValue> {
-    return this.withExclusiveAccess(async () => {
+  callFunction(name: string, ...args: QuickJsValue[]): QuickJsValue {
+    return this.withExclusiveAccessSync(() => {
       const argsJson = JSON.stringify(args);
-      const json = await this.runtime.callFunctionUtf8(name, argsJson);
+      const json = this.runtime.callFunctionUtf8(name, argsJson);
       return this.parseQuickJsValue(json);
     });
   }
 
   async fork(): Promise<ForkableVm> {
-    return this.withExclusiveAccess(async () => {
+    return this.withExclusiveAccessAsync(async () => {
       const snapshot = this.runtime.takeSnapshot();
       const childRuntime = await QuickJsWasmRuntime.create({ initializeRuntime: false });
       childRuntime.restoreSnapshot(snapshot);
@@ -41,13 +41,13 @@ export class QuickJsForkableVm implements ForkableVm {
     });
   }
 
-  async dispose(): Promise<void> {
-    await this.withExclusiveAccess(async () => {
+  dispose(): void {
+    this.withExclusiveAccessSync(() => {
       this.disposed = true;
     });
   }
 
-  private async withExclusiveAccess<T>(fn: () => Promise<T>): Promise<T> {
+  private async withExclusiveAccessAsync<T>(fn: () => Promise<T>): Promise<T> {
     this.throwIfUnavailable();
     if (this.busy) {
       throw new Error("VM operation already in progress");

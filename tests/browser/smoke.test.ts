@@ -3,7 +3,8 @@ declare const it: (name: string, fn: () => void | Promise<void>) => void;
 
 describe("browser smoke test", () => {
   it("performs basic arithmetic", () => {
-    if (1 + 1 !== 2) {
+    const sum = 1 + 1;
+    if (sum !== 2) {
       throw new Error("Math is broken");
     }
   });

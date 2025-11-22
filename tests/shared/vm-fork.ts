@@ -1,8 +1,10 @@
 import { createForkableVm, type ForkableVm } from "../../src/index.ts";
 import { ensureNumber, usingVm, type VmTestCase } from "./vm-basic.ts";
 
-const disposeAll = async (vms: ForkableVm[]): Promise<void> => {
-  await Promise.all(vms.map((vm) => vm.dispose()));
+const disposeAll = (vms: ForkableVm[]): void => {
+  for (const vm of vms) {
+    vm.dispose();
+  }
 };
 
 export const vmForkTestCases: VmTestCase[] = [
@@ -20,7 +22,7 @@ export const vmForkTestCases: VmTestCase[] = [
           ensureNumber(parentValue, 2, "parent after fork");
           ensureNumber(childValue, 11, "child after fork");
         } finally {
-          await childVm.dispose();
+          childVm.dispose();
         }
       });
     },
@@ -42,7 +44,7 @@ export const vmForkTestCases: VmTestCase[] = [
           ensureNumber(aValue, 6, "child A increments by 1");
           ensureNumber(bValue, 15, "child B increments by 10");
         } finally {
-          await disposeAll([childA, childB]);
+          disposeAll([childA, childB]);
         }
       });
     },
@@ -62,7 +64,7 @@ export const vmForkTestCases: VmTestCase[] = [
           const childUpdated = child.eval("globalThis.payload.nested.value");
           ensureNumber(childUpdated, 100, "child reflects mutation");
         } finally {
-          await child.dispose();
+          child.dispose();
         }
       });
     },
@@ -81,17 +83,17 @@ export const vmForkTestCases: VmTestCase[] = [
           })();
           0;
         `);
-        ensureNumber(await vm.callFunction("increment"), 1, "parent first increment");
-        ensureNumber(await vm.callFunction("increment"), 2, "parent second increment");
+        ensureNumber(vm.callFunction("increment"), 1, "parent first increment");
+        ensureNumber(vm.callFunction("increment"), 2, "parent second increment");
 
         const forked = await vm.fork();
         try {
-          ensureNumber(await forked.callFunction("increment"), 3, "child first increment");
-          ensureNumber(await vm.callFunction("increment"), 3, "parent third increment");
-          ensureNumber(await forked.callFunction("increment"), 4, "child second increment");
-          ensureNumber(await vm.callFunction("increment"), 4, "parent fourth increment");
+          ensureNumber(forked.callFunction("increment"), 3, "child first increment");
+          ensureNumber(vm.callFunction("increment"), 3, "parent third increment");
+          ensureNumber(forked.callFunction("increment"), 4, "child second increment");
+          ensureNumber(vm.callFunction("increment"), 4, "parent fourth increment");
         } finally {
-          await forked.dispose();
+          forked.dispose();
         }
       });
     },

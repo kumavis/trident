@@ -17,7 +17,7 @@ export async function createPreloadedVm(
     vm.eval(bootstrapCode);
     return vm;
   } catch (error) {
-    await vm.dispose();
+    vm.dispose();
     throw error;
   }
 }

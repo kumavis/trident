@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
-    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "test:dev:node": "nodemon --watch src --watch tests --ext ts,mts,cts,js,mjs --exec \"node --test --experimental-strip-types tests/node/**/*.test.ts\"",
@@ -53,6 +53,7 @@
     "nodemon": "^3.1.11",
     "prettier": "^3.6.2",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.47.0"
   }
 }

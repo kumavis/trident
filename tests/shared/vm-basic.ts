@@ -27,13 +27,13 @@ export const ensureValue = (value: QuickJsValue, expected: QuickJsValue, context
 
 export const usingVm = async (
   factory: () => Promise<ForkableVm>,
-  task: (vm: ForkableVm) => Promise<void>
+  task: (vm: ForkableVm) => Promise<void> | void
 ) => {
   const vm = await factory();
   try {
     await task(vm);
   } finally {
-    await vm.dispose();
+    vm.dispose();
   }
 };
 
@@ -41,7 +41,7 @@ export const vmBasicTestCases: VmTestCase[] = [
   {
     name: "evaluates arithmetic expressions",
     async run() {
-      await usingVm(() => createForkableVm(), async (vm) => {
+      await usingVm(() => createForkableVm(), (vm) => {
         const result = vm.eval("1 + 2");
         ensureNumber(result, 3, "eval");
       });
@@ -50,7 +50,7 @@ export const vmBasicTestCases: VmTestCase[] = [
   {
     name: "maintains global state across eval calls",
     async run() {
-      await usingVm(() => createForkableVm(), async (vm) => {
+      await usingVm(() => createForkableVm(), (vm) => {
         vm.eval("globalThis.counter = 41; 0;");
         const result = vm.eval("globalThis.counter + 1");
         ensureNumber(result, 42, "global state");
@@ -60,9 +60,9 @@ export const vmBasicTestCases: VmTestCase[] = [
   {
     name: "callFunction invokes exported global functions",
     async run() {
-      await usingVm(() => createForkableVm(), async (vm) => {
+      await usingVm(() => createForkableVm(), (vm) => {
         vm.eval("globalThis.times = (a, b) => a * b; 0;");
-        const value = await vm.callFunction("times", 6, 7);
+        const value = vm.callFunction("times", 6, 7);
         ensureNumber(value, 42, "callFunction");
       });
     },
@@ -70,7 +70,7 @@ export const vmBasicTestCases: VmTestCase[] = [
   {
     name: "createPreloadedVm executes bootstrap code",
     async run() {
-      await usingVm(() => createPreloadedVm("globalThis.answer = 42;"), async (vm) => {
+      await usingVm(() => createPreloadedVm("globalThis.answer = 42;"), (vm) => {
         const value = vm.eval("globalThis.answer");
         ensureValue(value, 42, "preloaded VM");
       });
