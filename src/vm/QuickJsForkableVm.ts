@@ -42,8 +42,15 @@ export class QuickJsForkableVm implements ForkableVm {
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
     this.withExclusiveAccessSync(() => {
+      if (this.disposed) {
+        return;
+      }
       this.disposed = true;
+      this.runtime.dispose();
     });
   }
 

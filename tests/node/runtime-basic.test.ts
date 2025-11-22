@@ -22,3 +22,11 @@ void test("QuickJsWasmRuntime callFunctionUtf8 invokes named function", async ()
   assert.equal(resultJson, "42");
 });
 
+void test("QuickJsWasmRuntime dispose is idempotent and blocks further use", async () => {
+  const runtime = await QuickJsWasmRuntime.create();
+  runtime.evalUtf8("1 + 2");
+  runtime.dispose();
+  runtime.dispose();
+  assert.throws(() => runtime.evalUtf8("1 + 3"), /has been disposed/);
+});
+

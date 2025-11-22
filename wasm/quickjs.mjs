@@ -112,10 +112,36 @@ function augmentModule(module) {
     globalObjectPtr = 0;
   }
 
-  function setLastResultPointer(ptr, len) {
-    if (lastResultPtr) {
-      module._free(lastResultPtr);
+  function releaseCachedHandles() {
+    if (!ffi || !contextPtr) {
+      resetCachedHandles();
+      return;
     }
+    if (globalObjectPtr) {
+      ffi.QTS_FreeValuePointer(contextPtr, globalObjectPtr);
+    }
+    if (jsonObjectPtr) {
+      ffi.QTS_FreeValuePointer(contextPtr, jsonObjectPtr);
+    }
+    if (stringifyFuncPtr) {
+      ffi.QTS_FreeValuePointer(contextPtr, stringifyFuncPtr);
+    }
+    resetCachedHandles();
+  }
+
+  function disposeLastResultBuffer() {
+    if (!lastResultPtr) {
+      return;
+    }
+    module._free(lastResultPtr);
+    lastResultPtr = 0;
+    lastResultLen = 0;
+    updateMetadata(METADATA_INDEX.lastResultPtr, 0);
+    updateMetadata(METADATA_INDEX.lastResultLen, 0);
+  }
+
+  function setLastResultPointer(ptr, len) {
+    disposeLastResultBuffer();
     lastResultPtr = ptr >>> 0;
     lastResultLen = len >>> 0;
     updateMetadata(METADATA_INDEX.lastResultPtr, lastResultPtr);
@@ -309,6 +335,16 @@ function augmentModule(module) {
     updateMetadata(METADATA_INDEX.runtimePtr, runtimePtr);
     updateMetadata(METADATA_INDEX.contextPtr, contextPtr);
     resetCachedHandles();
+    return 0;
+  };
+
+  module._qjs_dispose_runtime = function disposeRuntime() {
+    releaseCachedHandles();
+    contextPtr = 0;
+    runtimePtr = 0;
+    updateMetadata(METADATA_INDEX.contextPtr, 0);
+    updateMetadata(METADATA_INDEX.runtimePtr, 0);
+    disposeLastResultBuffer();
     return 0;
   };
 

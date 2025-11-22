@@ -9,6 +9,7 @@ export interface QuickJsModule {
   _qjs_call_function(namePtr: number, nameLen: number, argsPtr: number, argsLen: number): number;
   _qjs_get_last_result_ptr(): number;
   _qjs_get_last_result_len(): number;
+  _qjs_dispose_runtime(): void;
   _qjs_post_restore?(): void;
 }
 
