@@ -8,7 +8,7 @@ async function loadQuickJsModule() {
   return factory();
 }
 async function importQuickJsModuleFactory() {
-  const quickJsUrl = new URL("../../wasm/quickjs.mjs", import.meta.url);
+  const quickJsUrl = new URL("../wasm/quickjs.mjs", import.meta.url);
   const moduleNamespace = await import(quickJsUrl.href);
   const factory = moduleNamespace.default ?? moduleNamespace.QuickJsModuleFactory ?? moduleNamespace.factory;
   if (!factory) {
