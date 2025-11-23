@@ -158,4 +158,22 @@ export const vmBasicTestCases: VmTestCase[] = [
       });
     },
   },
+  {
+    name: "QuickJS arrays implement host iteration",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval("[1, 2, 3]");
+        assertType(proxy, isObjectLike, "iterable proxy", "expected QuickJS proxy object");
+        const iterableProxy = proxy as unknown as number[];
+        const spreadValues = [...iterableProxy];
+        assertJsonEqual(spreadValues, [1, 2, 3], "spread operator collects values");
+
+        const collected: number[] = [];
+        for (const value of iterableProxy) {
+          collected.push(value);
+        }
+        assertJsonEqual(collected, [1, 2, 3], "for...of collects values");
+      });
+    },
+  },
 ];

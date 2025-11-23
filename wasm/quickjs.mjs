@@ -22,6 +22,7 @@ const OWN_KEYS_FLAGS =
   GetOwnPropertyNamesFlags.JS_GPN_STRING_MASK |
   GetOwnPropertyNamesFlags.JS_GPN_ENUM_ONLY |
   GetOwnPropertyNamesFlags.QTS_STANDARD_COMPLIANT_NUMBER;
+const HAS_ITERATOR_SYMBOL = typeof Symbol === "function" && typeof Symbol.iterator === "symbol";
 
 function isNodeLikeEnvironment() {
   return (
@@ -260,6 +261,44 @@ function augmentModule(module) {
     }
   }
 
+  function getQuickJsArrayLength(handle) {
+    const lengthPtr = module._malloc(4);
+    try {
+      const result = ffi.QTS_GetLength(contextPtr, lengthPtr, handle.ptr);
+      if (result !== 0) {
+        return null;
+      }
+      return module.HEAPU32[lengthPtr >> 2];
+    } finally {
+      module._free(lengthPtr);
+    }
+  }
+
+  function createArrayIteratorFactory(handle) {
+    if (!HAS_ITERATOR_SYMBOL) {
+      return null;
+    }
+    const length = getQuickJsArrayLength(handle);
+    if (length === null) {
+      return null;
+    }
+    return function arrayIteratorFactory() {
+      let index = 0;
+      const iterator = {
+        next() {
+          if (index >= length) {
+            return { done: true, value: undefined };
+          }
+          const value = getQuickJsPropertyValue(handle, String(index));
+          index += 1;
+          return { done: false, value };
+        },
+      };
+      iterator[Symbol.iterator] = () => iterator;
+      return iterator;
+    };
+  }
+
   function createObjectProxy(valuePtr) {
     const handle = retainQuickJsValueHandle(valuePtr);
     const target = {};
@@ -297,6 +336,9 @@ function augmentModule(module) {
         }
         if (prop === Symbol.toPrimitive) {
           return () => "[object QuickJsObject]";
+        }
+        if (HAS_ITERATOR_SYMBOL && prop === Symbol.iterator) {
+          return createArrayIteratorFactory(handle);
         }
         const key = normalizePropertyKey(prop);
         if (key === null) {

@@ -44,26 +44,6 @@ export const vmQuirkTestCases: VmTestCase[] = [
     },
   },
   {
-    name: "Spreading QuickJS arrays throws due to missing iterator",
-    async run() {
-      await usingVm(() => createForkableVm(), (vm) => {
-        const arrayProxy = vm.eval("[1, 2, 3]");
-        assertType(arrayProxy, isObjectLike, "spread proxy", "expected QuickJS proxy object");
-        let threw = false;
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const values = [...(arrayProxy as unknown as Iterable<unknown>)];
-          void values;
-        } catch {
-          threw = true;
-        }
-        if (!threw) {
-          throw new Error("spreading QuickJS proxies should throw due to missing Symbol.iterator");
-        }
-      });
-    },
-  },
-  {
     name: "callFunction works even after switching between VM instances",
     async run() {
       const firstVm = await createForkableVm();
