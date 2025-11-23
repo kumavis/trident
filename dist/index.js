@@ -1,11 +1,21 @@
 // src/runtime/loadQuickJsModule.ts
-var cachedFactoryPromise = null;
-async function loadQuickJsModule() {
-  if (!cachedFactoryPromise) {
-    cachedFactoryPromise = importQuickJsModuleFactory();
+var runtimeInterruptState = /* @__PURE__ */ new Map();
+function globalShouldInterrupt(_unused, runtimePtr) {
+  const state = runtimeInterruptState.get(runtimePtr);
+  if (!state) {
+    return false;
   }
-  const factory = await cachedFactoryPromise;
-  return factory();
+  state.counter++;
+  return state.counter > state.limit;
+}
+async function loadQuickJsModule() {
+  const factory = await importQuickJsModuleFactory();
+  const imports = {
+    callbacks: {
+      shouldInterrupt: globalShouldInterrupt
+    }
+  };
+  return factory(imports);
 }
 async function importQuickJsModuleFactory() {
   const isBuiltArtifact = /[/\\]dist[/\\]/.test(import.meta.url);
@@ -22,15 +32,26 @@ async function importQuickJsModuleFactory() {
 // src/runtime/QuickJsWasmRuntime.ts
 var encoder = new TextEncoder();
 var QuickJsWasmRuntime = class _QuickJsWasmRuntime {
-  constructor(module) {
+  constructor(module, maxCycles) {
+    this.runtimePtr = 0;
     this.module = module;
+    this.maxCycles = maxCycles;
   }
   static async create(options = {}) {
     const quickJsModule = await loadQuickJsModule();
     if (options.initializeRuntime !== false) {
       quickJsModule._qjs_init_runtime();
     }
-    return new _QuickJsWasmRuntime(quickJsModule);
+    const runtime = new _QuickJsWasmRuntime(quickJsModule, options.maxCycles);
+    runtime.runtimePtr = quickJsModule._qjs_get_runtime_ptr();
+    runtimeInterruptState.set(runtime.runtimePtr, {
+      counter: 0,
+      limit: options.maxCycles ?? Infinity
+    });
+    if (options.maxCycles !== void 0) {
+      quickJsModule._QTS_RuntimeEnableInterruptHandler(runtime.runtimePtr);
+    }
+    return runtime;
   }
   getMemoryView() {
     return this.module.HEAPU8;
@@ -51,16 +72,38 @@ var QuickJsWasmRuntime = class _QuickJsWasmRuntime {
       this.module._qjs_post_restore();
     }
   }
-  evalUtf8(source) {
-    return this.invokeWithString(source, (ptr, len) => {
+  evalUtf8(source, callMaxCycles) {
+    const { result } = this.evalUtf8WithMetrics(source, callMaxCycles);
+    return result;
+  }
+  evalUtf8WithMetrics(source, callMaxCycles) {
+    const state = runtimeInterruptState.get(this.runtimePtr);
+    if (state) {
+      state.counter = 0;
+      state.limit = callMaxCycles ?? this.maxCycles ?? Infinity;
+    }
+    const result = this.invokeWithString(source, (ptr, len) => {
       return this.module._qjs_eval_utf8(ptr, len);
     });
+    const cycleCount = state ? state.counter : 0;
+    return { result, cycleCount };
   }
-  callFunctionUtf8(functionName, args) {
-    return this.invokeWithString(
+  callFunctionUtf8(functionName, args, callMaxCycles) {
+    const { result } = this.callFunctionUtf8WithMetrics(functionName, args, callMaxCycles);
+    return result;
+  }
+  callFunctionUtf8WithMetrics(functionName, args, callMaxCycles) {
+    const state = runtimeInterruptState.get(this.runtimePtr);
+    if (state) {
+      state.counter = 0;
+      state.limit = callMaxCycles ?? this.maxCycles ?? Infinity;
+    }
+    const result = this.invokeWithString(
       functionName,
       (namePtr, nameLen) => this.module._qjs_call_function(namePtr, nameLen, args)
     );
+    const cycleCount = state ? state.counter : 0;
+    return { result, cycleCount };
   }
   invokeWithString(value, fn) {
     const { ptr, len } = this.writeString(value);
@@ -87,24 +130,40 @@ var QuickJsForkableVm = class _QuickJsForkableVm {
     this.options = options;
   }
   static async create(options = {}) {
-    const runtime = await QuickJsWasmRuntime.create();
+    const runtime = await QuickJsWasmRuntime.create({
+      maxCycles: options.maxCycles
+    });
     return new _QuickJsForkableVm(runtime, options);
   }
   get globalThis() {
     return this.withExclusiveAccessSync(() => this.runtime.evalUtf8("globalThis"));
   }
-  eval(code) {
-    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8(code));
+  eval(code, options) {
+    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8(code, options?.maxCycles));
+  }
+  evalWithMetrics(code, options) {
+    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8WithMetrics(code, options?.maxCycles));
   }
   callFunction(name, ...args) {
     return this.withExclusiveAccessSync(() => this.runtime.callFunctionUtf8(name, args));
   }
-  async fork() {
+  callFunctionWithMetrics(name, ...args) {
+    return this.withExclusiveAccessSync(() => this.runtime.callFunctionUtf8WithMetrics(name, args));
+  }
+  async fork(options) {
     return this.withExclusiveAccessAsync(async () => {
       const snapshot = this.runtime.takeSnapshot();
-      const childRuntime = await QuickJsWasmRuntime.create({ initializeRuntime: false });
+      const childMaxCycles = options?.maxCycles !== void 0 ? options.maxCycles : this.options.maxCycles;
+      const childRuntime = await QuickJsWasmRuntime.create({
+        initializeRuntime: false,
+        maxCycles: childMaxCycles
+      });
       childRuntime.restoreSnapshot(snapshot);
-      return new _QuickJsForkableVm(childRuntime, this.options);
+      const childOptions = {
+        ...this.options,
+        maxCycles: childMaxCycles
+      };
+      return new _QuickJsForkableVm(childRuntime, childOptions);
     });
   }
   dispose() {

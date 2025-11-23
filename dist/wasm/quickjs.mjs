@@ -733,5 +733,10 @@ function augmentModule(module) {
     resetCachedHandles();
     return 0;
   };
+
+  module._qjs_get_runtime_ptr = function getRuntimePtr() {
+    module._qjs_init_runtime();
+    return runtimePtr;
+  };
 }
 
