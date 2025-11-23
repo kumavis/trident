@@ -4,26 +4,12 @@ import {
   type ForkableVm,
   type QuickJsValue,
 } from "../../src/index.ts";
+import { assertJsonEqual, assertNumber, assertType } from "./assert.ts";
 
 export interface VmTestCase {
   name: string;
   run(): Promise<void>;
 }
-
-export const ensureNumber = (value: QuickJsValue, expected: number, context: string) => {
-  if (typeof value !== "number") {
-    throw new Error(`${context} expected number result`);
-  }
-  if (value !== expected) {
-    throw new Error(`${context} expected ${expected}, received ${String(value)}`);
-  }
-};
-
-export const ensureValue = (value: QuickJsValue, expected: QuickJsValue, context: string) => {
-  if (JSON.stringify(value) !== JSON.stringify(expected)) {
-    throw new Error(`${context} expected ${JSON.stringify(expected)}, received ${JSON.stringify(value)}`);
-  }
-};
 
 export const usingVm = async (
   factory: () => Promise<ForkableVm>,
@@ -37,13 +23,49 @@ export const usingVm = async (
   }
 };
 
+const isObjectLike = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
 export const vmBasicTestCases: VmTestCase[] = [
   {
     name: "evaluates arithmetic expressions",
     async run() {
       await usingVm(() => createForkableVm(), (vm) => {
         const result = vm.eval("1 + 2");
-        ensureNumber(result, 3, "eval");
+        assertNumber(result, 3, "eval");
+      });
+    },
+  },
+  {
+    name: "globalThis proxy reflects VM global object",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const vmGlobalThis = vm.globalThis as { counter?: number; greeting?: string };
+        assertType(
+          vmGlobalThis,
+          isObjectLike,
+          "globalThis proxy",
+          "expected QuickJS proxy object"
+        );
+        vmGlobalThis.counter = 41;
+        const counterValue = vm.eval("globalThis.counter");
+        assertNumber(counterValue, 41, "globalThis host writes");
+
+        vm.eval("globalThis.greeting = 'hi'; 0;");
+        const greetingValue = vmGlobalThis.greeting;
+        assertJsonEqual(greetingValue, "hi", "globalThis host reads");
+      });
+    },
+  },
+  {
+    name: "globalThis assignment works without trailing expression",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const globals = vm.globalThis as { answer?: number; message?: string };
+        assertType(globals, isObjectLike, "globalThis proxy", "expected QuickJS proxy object");
+        globals.answer = 42;
+        vm.eval("globalThis.message = `answer: ${globalThis.answer}`");
+        assertJsonEqual(globals.message, "answer: 42", "globalThis assignment");
       });
     },
   },
@@ -53,7 +75,7 @@ export const vmBasicTestCases: VmTestCase[] = [
       await usingVm(() => createForkableVm(), (vm) => {
         vm.eval("globalThis.counter = 41; 0;");
         const result = vm.eval("globalThis.counter + 1");
-        ensureNumber(result, 42, "global state");
+        assertNumber(result, 42, "global state");
       });
     },
   },
@@ -69,7 +91,7 @@ export const vmBasicTestCases: VmTestCase[] = [
           };
           math.add(40, 2);
         `);
-        ensureNumber(result, 42, "object method");
+        assertNumber(result, 42, "object method");
       });
     },
   },
@@ -85,11 +107,9 @@ export const vmBasicTestCases: VmTestCase[] = [
             },
           })
         `) as { add: (value: number) => number; base: number };
-        if (typeof math !== "object" || math === null) {
-          throw new Error("expected math proxy object");
-        }
+        assertType(math, isObjectLike, "math proxy", "expected QuickJS object proxy");
         const value = math.add(2);
-        ensureNumber(value, 42, "proxy method invocation");
+        assertNumber(value, 42, "proxy method invocation");
       });
     },
   },
@@ -99,7 +119,7 @@ export const vmBasicTestCases: VmTestCase[] = [
       await usingVm(() => createForkableVm(), (vm) => {
         vm.eval("globalThis.times = (a, b) => a * b; 0;");
         const value = vm.callFunction("times", 6, 7);
-        ensureNumber(value, 42, "callFunction");
+        assertNumber(value, 42, "callFunction");
       });
     },
   },
@@ -108,8 +128,131 @@ export const vmBasicTestCases: VmTestCase[] = [
     async run() {
       await usingVm(() => createPreloadedVm("globalThis.answer = 42;"), (vm) => {
         const value = vm.eval("globalThis.answer");
-        ensureValue(value, 42, "preloaded VM");
+        assertJsonEqual(value, 42, "preloaded VM");
       });
+    },
+  },
+  {
+    name: "QuickJS proxies skip property enumeration",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval("({ answer: 42, double: (n) => n * 2 })") as {
+          answer?: number;
+          double?: (value: number) => number;
+        };
+        assertType(proxy, isObjectLike, "QuickJS proxy", "expected QuickJS proxy object");
+        assertNumber(proxy.answer ?? 0, 42, "proxy direct property access");
+        const keys = Object.keys(proxy);
+        if (keys.length !== 0) {
+          throw new Error("QuickJS proxies should not enumerate properties via Object.keys");
+        }
+      });
+    },
+  },
+  {
+    name: "Setting symbol properties on QuickJS proxies throws",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval("({})") as Record<string | symbol, unknown>;
+        assertType(proxy, isObjectLike, "QuickJS proxy", "expected QuickJS proxy object");
+        const token = Symbol("token");
+        let didThrow = false;
+        try {
+          proxy[token] = 123;
+        } catch {
+          didThrow = true;
+        }
+        if (!didThrow) {
+          throw new Error("setting symbol properties should throw TypeError");
+        }
+      });
+    },
+  },
+  {
+    name: "Object.defineProperty mutates only the host shadow for QuickJS proxies",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval(`
+          (function () {
+            globalThis.defineTarget = { existing: 1 };
+            return globalThis.defineTarget;
+          })()
+        `) as Record<string, unknown>;
+        assertType(proxy, isObjectLike, "defineTarget proxy", "expected QuickJS proxy object");
+        Object.defineProperty(proxy, "shadowed", { value: 99, configurable: true });
+        assertJsonEqual(proxy.shadowed, undefined, "proxy shadowed property read");
+        const vmValue = vm.eval("globalThis.defineTarget.shadowed");
+        assertJsonEqual(vmValue, undefined, "QuickJS object remains unchanged");
+      });
+    },
+  },
+  {
+    name: "JSON.stringify drops QuickJS proxy properties",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval("({ answer: 42 })");
+        assertType(proxy, isObjectLike, "JSON proxy", "expected QuickJS proxy object");
+        const serialized = JSON.stringify(proxy);
+        assertJsonEqual(serialized, "{}", "JSON serialization result");
+      });
+    },
+  },
+  {
+    name: "Spreading QuickJS arrays throws due to missing iterator",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const arrayProxy = vm.eval("[1, 2, 3]");
+        assertType(arrayProxy, isObjectLike, "spread proxy", "expected QuickJS proxy object");
+        let threw = false;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const values = [...(arrayProxy as unknown as Iterable<unknown>)];
+          void values;
+        } catch {
+          threw = true;
+        }
+        if (!threw) {
+          throw new Error("spreading QuickJS proxies should throw due to missing Symbol.iterator");
+        }
+      });
+    },
+  },
+  {
+    name: "callFunction works even after switching between VM instances",
+    async run() {
+      const firstVm = await createForkableVm();
+      const secondVm = await createForkableVm();
+      try {
+        firstVm.eval(`
+          globalThis.bump = (() => {
+            let counter = 0;
+            return () => {
+              counter += 1;
+              return counter;
+            };
+          })();
+          0;
+        `);
+        secondVm.eval(`
+          globalThis.bump = (() => {
+            let counter = 100;
+            return () => {
+              counter += 1;
+              return counter;
+            };
+          })();
+          0;
+        `);
+
+        assertNumber(firstVm.callFunction("bump"), 1, "first VM initial call");
+        assertNumber(secondVm.callFunction("bump"), 101, "second VM initial call");
+        const valueAfterSwitch = firstVm.callFunction("bump");
+        assertNumber(valueAfterSwitch, 2, "first VM after using second VM");
+        assertNumber(secondVm.callFunction("bump"), 102, "second VM after switching back");
+      } finally {
+        firstVm.dispose();
+        secondVm.dispose();
+      }
     },
   },
 ];

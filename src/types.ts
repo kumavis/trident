@@ -16,6 +16,7 @@ export type QuickJsValue =
   | QuickJsFunction;
 
 export interface ForkableVm {
+  readonly globalThis: QuickJsObject;
   eval(code: string): QuickJsValue;
   callFunction(name: string, ...args: QuickJsValue[]): QuickJsValue;
   fork(): Promise<ForkableVm>;

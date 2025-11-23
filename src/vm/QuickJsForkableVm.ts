@@ -1,5 +1,5 @@
 import { QuickJsWasmRuntime } from "../runtime/QuickJsWasmRuntime.ts";
-import type { CreateVmOptions, ForkableVm, QuickJsValue } from "../types.ts";
+import type { CreateVmOptions, ForkableVm, QuickJsObject, QuickJsValue } from "../types.ts";
 
 export class QuickJsForkableVm implements ForkableVm {
   private busy = false;
@@ -15,6 +15,10 @@ export class QuickJsForkableVm implements ForkableVm {
   static async create(options: CreateVmOptions = {}): Promise<QuickJsForkableVm> {
     const runtime = await QuickJsWasmRuntime.create();
     return new QuickJsForkableVm(runtime, options);
+  }
+
+  get globalThis(): QuickJsObject {
+    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8("globalThis") as QuickJsObject);
   }
 
   eval(code: string): QuickJsValue {
