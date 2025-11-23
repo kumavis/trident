@@ -176,4 +176,42 @@ export const vmBasicTestCases: VmTestCase[] = [
       });
     },
   },
+  {
+    name: "callFunction works even after switching between VM instances",
+    async run() {
+      const firstVm = await createForkableVm();
+      const secondVm = await createForkableVm();
+      try {
+        firstVm.eval(`
+          globalThis.bump = (() => {
+            let counter = 0;
+            return () => {
+              counter += 1;
+              return counter;
+            };
+          })();
+          0;
+        `);
+        secondVm.eval(`
+          globalThis.bump = (() => {
+            let counter = 100;
+            return () => {
+              counter += 1;
+              return counter;
+            };
+          })();
+          0;
+        `);
+
+        assertNumber(firstVm.callFunction("bump"), 1, "first VM initial call");
+        assertNumber(secondVm.callFunction("bump"), 101, "second VM initial call");
+        const valueAfterSwitch = firstVm.callFunction("bump");
+        assertNumber(valueAfterSwitch, 2, "first VM after using second VM");
+        assertNumber(secondVm.callFunction("bump"), 102, "second VM after switching back");
+      } finally {
+        firstVm.dispose();
+        secondVm.dispose();
+      }
+    },
+  },
 ];
