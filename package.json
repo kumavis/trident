@@ -13,8 +13,7 @@
     }
   },
   "files": [
-    "dist/",
-    "wasm/"
+    "dist/"
   ],
   "scripts": {
     "build": "tsup",
@@ -23,8 +22,8 @@
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "test:dev:node": "nodemon --watch src --watch tests --ext ts,mts,cts,js,mjs --exec \"node --test --experimental-strip-types tests/node/**/*.test.ts\"",
-    "test:dev:browser": "nodemon --watch src --watch tests --watch wasm --ext ts,mts,cts,js,mjs --exec \"web-test-runner --config web-test-runner.config.mjs\"",
-    "test:dev": "nodemon --watch src --watch tests --watch wasm --ext ts,mts,cts,js,mjs --exec \"npm run test:node && npm run test:browser\"",
+    "test:dev:browser": "nodemon --watch src --watch tests --watch src/wasm --ext ts,mts,cts,js,mjs --exec \"web-test-runner --config web-test-runner.config.mjs\"",
+    "test:dev": "nodemon --watch src --watch tests --watch src/wasm --ext ts,mts,cts,js,mjs --exec \"npm run test:node && npm run test:browser\"",
     "test:node": "node --test --experimental-strip-types tests/node/**/*.test.ts",
     "test:browser": "web-test-runner --config web-test-runner.config.mjs",
     "test": "npm run test:node && npm run test:browser"

@@ -25,7 +25,7 @@ export async function loadQuickJsModule(): Promise<QuickJsModule> {
 }
 
 async function importQuickJsModuleFactory(): Promise<QuickJsModuleFactory> {
-  const quickJsUrl = new URL("../../wasm/quickjs.mjs", import.meta.url);
+  const quickJsUrl = new URL("../wasm/quickjs.mjs", import.meta.url);
   const moduleNamespace = (await import(quickJsUrl.href)) as {
     default?: QuickJsModuleFactory;
     QuickJsModuleFactory?: QuickJsModuleFactory;

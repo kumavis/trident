@@ -30,7 +30,13 @@ const applyProjectSettings = (configs) =>
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "node_modules/**", "eslint.config.mjs", "tsup.config.ts", "wasm/**"],
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "eslint.config.mjs",
+      "tsup.config.ts",
+      "src/wasm/**",
+    ],
   },
   js.configs.recommended,
   ...applyProjectSettings(tseslint.configs.recommended),
