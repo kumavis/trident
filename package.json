@@ -13,7 +13,8 @@
     }
   },
   "files": [
-    "dist/"
+    "dist/",
+    "wasm/"
   ],
   "scripts": {
     "build": "tsup",
