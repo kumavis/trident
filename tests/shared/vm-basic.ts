@@ -131,5 +131,31 @@ export const vmBasicTestCases: VmTestCase[] = [
         assertJsonEqual(value, 42, "preloaded VM");
       });
     },
-  }
+  },
+  {
+    name: "QuickJS proxies enumerate properties via Object.keys",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval("({ answer: 42, double: (n) => n * 2 })") as {
+          answer?: number;
+          double?: (value: number) => number;
+        };
+        assertType(proxy, isObjectLike, "QuickJS proxy", "expected QuickJS proxy object");
+        assertNumber(proxy.answer ?? 0, 42, "proxy direct property access");
+        const keys = Object.keys(proxy);
+        assertJsonEqual(keys, ["answer", "double"], "Object.keys result");
+      });
+    },
+  },
+  {
+    name: "JSON.stringify preserves QuickJS proxy properties",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const proxy = vm.eval("({ answer: 42 })");
+        assertType(proxy, isObjectLike, "JSON proxy", "expected QuickJS proxy object");
+        const serialized = JSON.stringify(proxy);
+        assertJsonEqual(serialized, '{"answer":42}', "JSON serialization result");
+      });
+    },
+  },
 ];

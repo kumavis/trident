@@ -7,23 +7,6 @@ const isObjectLike = (value: unknown): value is Record<string, unknown> =>
 
 export const vmQuirkTestCases: VmTestCase[] = [
   {
-    name: "QuickJS proxies skip property enumeration",
-    async run() {
-      await usingVm(() => createForkableVm(), (vm) => {
-        const proxy = vm.eval("({ answer: 42, double: (n) => n * 2 })") as {
-          answer?: number;
-          double?: (value: number) => number;
-        };
-        assertType(proxy, isObjectLike, "QuickJS proxy", "expected QuickJS proxy object");
-        assertNumber(proxy.answer ?? 0, 42, "proxy direct property access");
-        const keys = Object.keys(proxy);
-        if (keys.length !== 0) {
-          throw new Error("QuickJS proxies should not enumerate properties via Object.keys");
-        }
-      });
-    },
-  },
-  {
     name: "Setting symbol properties on QuickJS proxies throws",
     async run() {
       await usingVm(() => createForkableVm(), (vm) => {
@@ -57,17 +40,6 @@ export const vmQuirkTestCases: VmTestCase[] = [
         assertJsonEqual(proxy.shadowed, undefined, "proxy shadowed property read");
         const vmValue = vm.eval("globalThis.defineTarget.shadowed");
         assertJsonEqual(vmValue, undefined, "QuickJS object remains unchanged");
-      });
-    },
-  },
-  {
-    name: "JSON.stringify drops QuickJS proxy properties",
-    async run() {
-      await usingVm(() => createForkableVm(), (vm) => {
-        const proxy = vm.eval("({ answer: 42 })");
-        assertType(proxy, isObjectLike, "JSON proxy", "expected QuickJS proxy object");
-        const serialized = JSON.stringify(proxy);
-        assertJsonEqual(serialized, "{}", "JSON serialization result");
       });
     },
   },

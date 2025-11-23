@@ -1,5 +1,5 @@
 import { QuickJSFFI } from "@jitl/quickjs-wasmfile-release-sync/ffi";
-import { EvalFlags, IsEqualOp } from "@jitl/quickjs-ffi-types";
+import { EvalFlags, GetOwnPropertyNamesFlags, IsEqualOp } from "@jitl/quickjs-ffi-types";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
@@ -18,6 +18,10 @@ const METADATA_INDEX = {
 };
 
 const DETECT_MODULE_AUTO = 1;
+const OWN_KEYS_FLAGS =
+  GetOwnPropertyNamesFlags.JS_GPN_STRING_MASK |
+  GetOwnPropertyNamesFlags.JS_GPN_ENUM_ONLY |
+  GetOwnPropertyNamesFlags.QTS_STANDARD_COMPLIANT_NUMBER;
 
 function isNodeLikeEnvironment() {
   return (
@@ -198,6 +202,64 @@ function augmentModule(module) {
     return null;
   }
 
+  function getQuickJsPropertyValue(handle, key) {
+    const keyPtr = allocJsString(key);
+    try {
+      const valuePtr = ffi.QTS_GetProp(contextPtr, handle.ptr, keyPtr);
+      return handleQuickJsResult(valuePtr, `get property "${key}"`);
+    } finally {
+      ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
+    }
+  }
+
+  function collectQuickJsOwnKeys(handle) {
+    const pointerBufferPtr = module._malloc(4);
+    const lengthBufferPtr = module._malloc(4);
+    let namesBufferPtr = 0;
+    try {
+      const resultPtr = ffi.QTS_GetOwnPropertyNames(
+        contextPtr,
+        pointerBufferPtr,
+        lengthBufferPtr,
+        handle.ptr,
+        OWN_KEYS_FLAGS
+      );
+      handleQuickJsResult(resultPtr, "ownKeys");
+      const pointerArrayPtr = module.HEAPU32[pointerBufferPtr >> 2];
+      const length = module.HEAPU32[lengthBufferPtr >> 2];
+      if (!pointerArrayPtr || length === 0) {
+        return [];
+      }
+      namesBufferPtr = pointerArrayPtr;
+      const keys = [];
+      const heap32 = module.HEAPU32;
+      const baseIndex = namesBufferPtr >> 2;
+      for (let i = 0; i < length; i += 1) {
+        const valuePtr = heap32[baseIndex + i];
+        if (!valuePtr) {
+          continue;
+        }
+        try {
+          const keyValue = fromQuickJsValue(valuePtr);
+          if (typeof keyValue === "string") {
+            keys.push(keyValue);
+          } else if (keyValue !== undefined && keyValue !== null) {
+            keys.push(String(keyValue));
+          }
+        } finally {
+          ffi.QTS_FreeValuePointer(contextPtr, valuePtr);
+        }
+      }
+      return keys;
+    } finally {
+      if (namesBufferPtr) {
+        module._free(namesBufferPtr);
+      }
+      module._free(pointerBufferPtr);
+      module._free(lengthBufferPtr);
+    }
+  }
+
   function createObjectProxy(valuePtr) {
     const handle = retainQuickJsValueHandle(valuePtr);
     const target = {};
@@ -240,13 +302,7 @@ function augmentModule(module) {
         if (key === null) {
           return Reflect.get(_target, prop, receiver);
         }
-        const keyPtr = allocJsString(key);
-        try {
-          const valuePtr = ffi.QTS_GetProp(contextPtr, handle.ptr, keyPtr);
-          return handleQuickJsResult(valuePtr, `get property "${key}"`);
-        } finally {
-          ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
-        }
+        return getQuickJsPropertyValue(handle, key);
       },
       set(_target, prop, value) {
         const key = normalizePropertyKey(prop);
@@ -283,11 +339,23 @@ function augmentModule(module) {
         return false;
       },
       ownKeys() {
-        // Property enumeration is not yet supported; return empty set for now.
-        return [];
+        return collectQuickJsOwnKeys(handle);
       },
-      getOwnPropertyDescriptor() {
-        return undefined;
+      getOwnPropertyDescriptor(_target, prop) {
+        const key = normalizePropertyKey(prop);
+        if (key === null) {
+          return undefined;
+        }
+        const value = getQuickJsPropertyValue(handle, key);
+        if (value === undefined) {
+          return undefined;
+        }
+        return {
+          configurable: true,
+          enumerable: true,
+          value,
+          writable: true,
+        };
       },
     };
   }
