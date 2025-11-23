@@ -2,8 +2,14 @@ import test from "node:test";
 import { vmBasicTestCases } from "../shared/vm-basic.ts";
 import { vmForkTestCases } from "../shared/vm-fork.ts";
 import { vmIdentityTestCases } from "../shared/vm-identity.ts";
+import { vmQuirkTestCases } from "../shared/vm-quirks.ts";
 
-for (const testCase of [...vmBasicTestCases, ...vmIdentityTestCases, ...vmForkTestCases]) {
+for (const testCase of [
+  ...vmBasicTestCases,
+  ...vmIdentityTestCases,
+  ...vmQuirkTestCases,
+  ...vmForkTestCases,
+]) {
   void test(`Forkable VM (node) – ${testCase.name}`, async () => {
     await testCase.run();
   });
