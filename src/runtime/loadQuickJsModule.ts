@@ -25,7 +25,10 @@ export async function loadQuickJsModule(): Promise<QuickJsModule> {
 }
 
 async function importQuickJsModuleFactory(): Promise<QuickJsModuleFactory> {
-  const quickJsUrl = new URL("../wasm/quickjs.mjs", import.meta.url);
+  // TODO: need a better way of distributing the wasm files
+  const isBuiltArtifact = /[/\\]dist[/\\]/.test(import.meta.url);
+  const wasmRelativePath = isBuiltArtifact ? "./wasm/quickjs.mjs" : "../wasm/quickjs.mjs";
+  const quickJsUrl = new URL(wasmRelativePath, import.meta.url);
   const moduleNamespace = (await import(quickJsUrl.href)) as {
     default?: QuickJsModuleFactory;
     QuickJsModuleFactory?: QuickJsModuleFactory;
