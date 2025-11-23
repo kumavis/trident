@@ -1,5 +1,5 @@
 import { QuickJSFFI } from "@jitl/quickjs-wasmfile-release-sync/ffi";
-import { EvalFlags } from "@jitl/quickjs-ffi-types";
+import { EvalFlags, IsEqualOp } from "@jitl/quickjs-ffi-types";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
@@ -43,11 +43,23 @@ function augmentModule(module) {
   let metadataPtr = 0;
   let runtimePtr = 0;
   let contextPtr = 0;
-  let lastResultPtr = 0;
-  let lastResultLen = 0;
   let globalObjectPtr = 0;
-  let jsonObjectPtr = 0;
-  let stringifyFuncPtr = 0;
+  const proxyHandleMetadata = new WeakMap();
+  const proxyFinalizationRegistry =
+    typeof FinalizationRegistry === "undefined"
+      ? null
+      : new FinalizationRegistry((handle) => {
+          if (!handle?.ptr || !ffi || !contextPtr) {
+            return;
+          }
+          try {
+            ffi.QTS_FreeValuePointer(contextPtr, handle.ptr);
+          } catch {
+            // ignore cleanup failures
+          } finally {
+            handle.ptr = 0;
+          }
+        });
 
   function ensureFFI() {
     if (!ffi) {
@@ -107,26 +119,28 @@ function augmentModule(module) {
   }
 
   function resetCachedHandles() {
-    jsonObjectPtr = 0;
-    stringifyFuncPtr = 0;
     globalObjectPtr = 0;
   }
 
-  function setLastResultPointer(ptr, len) {
-    if (lastResultPtr) {
-      module._free(lastResultPtr);
-    }
-    lastResultPtr = ptr >>> 0;
-    lastResultLen = len >>> 0;
-    updateMetadata(METADATA_INDEX.lastResultPtr, lastResultPtr);
-    updateMetadata(METADATA_INDEX.lastResultLen, lastResultLen);
+  function retainQuickJsValueHandle(valuePtr) {
+    return { ptr: ffi.QTS_DupValuePointer(contextPtr, valuePtr) };
   }
 
-  function storeLastResultString(value) {
-    const bytes = TEXT_ENCODER.encode(value);
-    const buffer = module._malloc(bytes.length);
-    heapU8().set(bytes, buffer);
-    setLastResultPointer(buffer, bytes.length);
+  function rememberProxy(target, handle) {
+    proxyHandleMetadata.set(target, handle);
+    proxyFinalizationRegistry?.register(target, handle);
+  }
+
+  function getProxyHandle(target) {
+    return proxyHandleMetadata.get(target) ?? null;
+  }
+
+  function duplicateProxyPointer(target) {
+    const handle = getProxyHandle(target);
+    if (!handle?.ptr) {
+      return null;
+    }
+    return ffi.QTS_DupValuePointer(contextPtr, handle.ptr);
   }
 
   function decodeUtf8(ptr, len) {
@@ -158,35 +172,10 @@ function augmentModule(module) {
     return globalObjectPtr;
   }
 
-  function getJsonObject() {
-    if (!jsonObjectPtr) {
-      const globalPtr = getGlobalObject();
-      const keyPtr = allocJsString("JSON");
-      const jsonPtr = ffi.QTS_GetProp(contextPtr, globalPtr, keyPtr);
-      ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
-      if (!jsonPtr) {
-        throw new Error("JSON global is not available inside QuickJS runtime");
-      }
-      jsonObjectPtr = jsonPtr;
-    }
-    return jsonObjectPtr;
-  }
-
-  function getJsonStringify() {
-    if (!stringifyFuncPtr) {
-      const jsonPtr = getJsonObject();
-      const keyPtr = allocJsString("stringify");
-      const fnPtr = ffi.QTS_GetProp(contextPtr, jsonPtr, keyPtr);
-      ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
-      if (!fnPtr) {
-        throw new Error("JSON.stringify not available in QuickJS runtime");
-      }
-      stringifyFuncPtr = fnPtr;
-    }
-    return stringifyFuncPtr;
-  }
-
   function allocArgsPointer(args) {
+    if (args.length === 0) {
+      return 0;
+    }
     const ptr = module._malloc(args.length * 4);
     const view = heapU32();
     const base = ptr >> 2;
@@ -194,6 +183,198 @@ function augmentModule(module) {
       view[base + i] = args[i] >>> 0;
     }
     return ptr;
+  }
+
+  function normalizePropertyKey(prop) {
+    if (typeof prop === "string") {
+      return prop;
+    }
+    if (typeof prop === "number") {
+      return String(prop);
+    }
+    if (typeof prop === "symbol") {
+      return null;
+    }
+    return null;
+  }
+
+  function createObjectProxy(valuePtr) {
+    const handle = retainQuickJsValueHandle(valuePtr);
+    const target = {};
+    const handler = createObjectProxyHandler(handle);
+    const proxy = new Proxy(target, handler);
+    rememberProxy(proxy, handle);
+    return proxy;
+  }
+
+  function createFunctionProxy(valuePtr) {
+    const handle = retainQuickJsValueHandle(valuePtr);
+    const target = function quickJsFunctionProxy() {};
+    const objectHandler = createObjectProxyHandler(handle);
+    const handler = {
+      apply(_target, thisArg, argList) {
+        return callQuickJsFunction(handle.ptr, thisArg, argList);
+      },
+      get: objectHandler.get,
+      set: objectHandler.set,
+      has: objectHandler.has,
+      deleteProperty: objectHandler.deleteProperty,
+      ownKeys: objectHandler.ownKeys,
+      getOwnPropertyDescriptor: objectHandler.getOwnPropertyDescriptor,
+    };
+    const proxy = new Proxy(target, handler);
+    rememberProxy(proxy, handle);
+    return proxy;
+  }
+
+  function createObjectProxyHandler(handle) {
+    return {
+      get(_target, prop, receiver) {
+        if (prop === Symbol.toStringTag) {
+          return "QuickJsObject";
+        }
+        if (prop === Symbol.toPrimitive) {
+          return () => "[object QuickJsObject]";
+        }
+        const key = normalizePropertyKey(prop);
+        if (key === null) {
+          return Reflect.get(_target, prop, receiver);
+        }
+        const keyPtr = allocJsString(key);
+        try {
+          const valuePtr = ffi.QTS_GetProp(contextPtr, handle.ptr, keyPtr);
+          return handleQuickJsResult(valuePtr, `get property "${key}"`);
+        } finally {
+          ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
+        }
+      },
+      set(_target, prop, value) {
+        const key = normalizePropertyKey(prop);
+        if (key === null) {
+          throw new TypeError("QuickJS proxies only support string or number property keys");
+        }
+        const keyPtr = allocJsString(key);
+        const valuePtr = toQuickJsValue(value);
+        try {
+          ffi.QTS_SetProp(contextPtr, handle.ptr, keyPtr, valuePtr);
+        } finally {
+          ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
+          ffi.QTS_FreeValuePointer(contextPtr, valuePtr);
+        }
+        return true;
+      },
+      has(_target, prop) {
+        const key = normalizePropertyKey(prop);
+        if (key === null) {
+          return false;
+        }
+        const keyPtr = allocJsString(key);
+        try {
+          const valuePtr = ffi.QTS_GetProp(contextPtr, handle.ptr, keyPtr);
+          const result = handleQuickJsResult(valuePtr, `has property "${key}"`);
+          return result !== undefined;
+        } catch {
+          return false;
+        } finally {
+          ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
+        }
+      },
+      deleteProperty() {
+        return false;
+      },
+      ownKeys() {
+        // Property enumeration is not yet supported; return empty set for now.
+        return [];
+      },
+      getOwnPropertyDescriptor() {
+        return undefined;
+      },
+    };
+  }
+
+  function callQuickJsFunction(functionPtr, thisArg, argValues) {
+    const argHandles = [];
+    let argsBuffer = 0;
+    let thisPtr = null;
+    try {
+      thisPtr = toQuickJsThis(thisArg);
+      for (const value of argValues) {
+        argHandles.push(toQuickJsValue(value));
+      }
+      argsBuffer = allocArgsPointer(argHandles);
+      const resultPtr = ffi.QTS_Call(
+        contextPtr,
+        functionPtr,
+        thisPtr ?? ffi.QTS_GetUndefined(),
+        argHandles.length,
+        argsBuffer
+      );
+      return handleQuickJsResult(resultPtr, "function call");
+    } finally {
+      if (argsBuffer) {
+        module._free(argsBuffer);
+      }
+      argHandles.forEach((handlePtr) => ffi.QTS_FreeValuePointer(contextPtr, handlePtr));
+      if (thisPtr) {
+        ffi.QTS_FreeValuePointer(contextPtr, thisPtr);
+      }
+    }
+  }
+
+  function toQuickJsThis(thisArg) {
+    if (thisArg === undefined) {
+      return ffi.QTS_DupValuePointer(contextPtr, ffi.QTS_GetUndefined());
+    }
+    if (thisArg === null) {
+      return ffi.QTS_DupValuePointer(contextPtr, ffi.QTS_GetNull());
+    }
+    if (typeof thisArg === "object" || typeof thisArg === "function") {
+      const existingPtr = duplicateProxyPointer(thisArg);
+      if (existingPtr) {
+        return existingPtr;
+      }
+    }
+    return toQuickJsValue(thisArg);
+  }
+
+  function getQuickJsType(valuePtr) {
+    const typePtr = ffi.QTS_Typeof(contextPtr, valuePtr);
+    const jsType = module.UTF8ToString(typePtr);
+    ffi.QTS_FreeCString(contextPtr, typePtr);
+    return jsType;
+  }
+
+  function isStrictlyEqual(valuePtr, otherPtr) {
+    return ffi.QTS_IsEqual(contextPtr, valuePtr, otherPtr, IsEqualOp.IsStrictlyEqual) === 1;
+  }
+
+  function fromQuickJsValue(valuePtr) {
+    const jsType = getQuickJsType(valuePtr);
+    if (jsType === "undefined") {
+      return undefined;
+    }
+    if (jsType === "boolean") {
+      return isStrictlyEqual(valuePtr, ffi.QTS_GetTrue());
+    }
+    if (jsType === "number") {
+      return ffi.QTS_GetFloat64(contextPtr, valuePtr);
+    }
+    if (jsType === "string") {
+      const cStringPtr = ffi.QTS_GetString(contextPtr, valuePtr);
+      const text = module.UTF8ToString(cStringPtr);
+      ffi.QTS_FreeCString(contextPtr, cStringPtr);
+      return text;
+    }
+    if (jsType === "object") {
+      if (isStrictlyEqual(valuePtr, ffi.QTS_GetNull())) {
+        return null;
+      }
+      return createObjectProxy(valuePtr);
+    }
+    if (jsType === "function") {
+      return createFunctionProxy(valuePtr);
+    }
+    throw new Error(`Unsupported QuickJS value type: ${jsType}`);
   }
 
   function resolveException(valuePtr) {
@@ -213,31 +394,10 @@ function augmentModule(module) {
     return message;
   }
 
-  function stringifyQuickJsValue(valuePtr) {
-    const stringifyPtr = getJsonStringify();
-    const argsPtr = allocArgsPointer([valuePtr]);
-    const resultPtr = ffi.QTS_Call(contextPtr, stringifyPtr, getJsonObject(), 1, argsPtr);
-    module._free(argsPtr);
-    const errorMessage = resolveException(resultPtr);
-    if (errorMessage) {
-      ffi.QTS_FreeValuePointer(contextPtr, resultPtr);
-      throw new Error(errorMessage);
-    }
-    const resultTypePtr = ffi.QTS_Typeof(contextPtr, resultPtr);
-    const resultType = module.UTF8ToString(resultTypePtr);
-    ffi.QTS_FreeCString(contextPtr, resultTypePtr);
-    if (resultType === "undefined") {
-      ffi.QTS_FreeValuePointer(contextPtr, resultPtr);
-      return "null";
-    }
-    const cStringPtr = ffi.QTS_GetString(contextPtr, resultPtr);
-    const jsonString = module.UTF8ToString(cStringPtr);
-    ffi.QTS_FreeCString(contextPtr, cStringPtr);
-    ffi.QTS_FreeValuePointer(contextPtr, resultPtr);
-    return jsonString;
-  }
-
   function toQuickJsValue(value) {
+    if (value === undefined) {
+      return ffi.QTS_DupValuePointer(contextPtr, ffi.QTS_GetUndefined());
+    }
     if (value === null) {
       return ffi.QTS_DupValuePointer(contextPtr, ffi.QTS_GetNull());
     }
@@ -249,8 +409,14 @@ function augmentModule(module) {
       return ffi.QTS_NewFloat64(contextPtr, value);
     }
     if (valueType === "string") {
-      const jsString = allocJsString(value);
-      return jsString;
+      return allocJsString(value);
+    }
+    if (valueType === "function") {
+      const proxyPtr = duplicateProxyPointer(value);
+      if (proxyPtr) {
+        return proxyPtr;
+      }
+      throw new Error("Passing host functions into QuickJS is not supported");
     }
     if (Array.isArray(value)) {
       const arrayPtr = ffi.QTS_NewArray(contextPtr);
@@ -264,6 +430,10 @@ function augmentModule(module) {
       return arrayPtr;
     }
     if (valueType === "object") {
+      const proxyPtr = duplicateProxyPointer(value);
+      if (proxyPtr) {
+        return proxyPtr;
+      }
       const objectPtr = ffi.QTS_NewObject(contextPtr);
       Object.keys(value).forEach((key) => {
         const propertyPtr = toQuickJsValue(value[key]);
@@ -279,18 +449,16 @@ function augmentModule(module) {
 
   function handleQuickJsResult(resultPtr, label) {
     const exception = resolveException(resultPtr);
-    if (exception) {
-      ffi.QTS_FreeValuePointer(contextPtr, resultPtr);
-      storeLastResultString(JSON.stringify({ error: exception }));
-      return 1;
-    }
     try {
-      const jsonString = stringifyQuickJsValue(resultPtr);
-      storeLastResultString(jsonString);
-      return 0;
+      if (exception) {
+        throw new Error(exception);
+      }
+      return fromQuickJsValue(resultPtr);
     } catch (error) {
-      storeLastResultString(JSON.stringify({ error: `${label}: ${String(error?.message ?? error)}` }));
-      return 1;
+      if (exception) {
+        throw error;
+      }
+      throw new Error(`${label}: ${String(error?.message ?? error)}`);
     } finally {
       ffi.QTS_FreeValuePointer(contextPtr, resultPtr);
     }
@@ -313,9 +481,9 @@ function augmentModule(module) {
   };
 
   module._qjs_eval_utf8 = function evalUtf8(codePtr, codeLen) {
+    module._qjs_init_runtime();
+    const localPtr = cloneInputBuffer(codePtr, codeLen);
     try {
-      module._qjs_init_runtime();
-      const localPtr = cloneInputBuffer(codePtr, codeLen);
       const resultPtr = ffi.QTS_Eval(
         contextPtr,
         localPtr,
@@ -324,49 +492,46 @@ function augmentModule(module) {
         DETECT_MODULE_AUTO,
         EvalFlags.JS_EVAL_TYPE_GLOBAL
       );
-      module._free(localPtr);
       return handleQuickJsResult(resultPtr, "eval");
-    } catch (error) {
-      storeLastResultString(JSON.stringify({ error: String(error?.message ?? error) }));
-      return 1;
+    } finally {
+      module._free(localPtr);
     }
   };
 
-  module._qjs_call_function = function callFunction(namePtr, nameLen, argsPtr, argsLen) {
+  module._qjs_call_function = function callFunction(namePtr, nameLen, argValues = []) {
+    module._qjs_init_runtime();
+    const functionName = decodeUtf8(namePtr, nameLen);
+    const globalPtr = getGlobalObject();
+    const nameHandle = allocJsString(functionName);
+    const functionPtr = ffi.QTS_GetProp(contextPtr, globalPtr, nameHandle);
+    ffi.QTS_FreeValuePointer(contextPtr, nameHandle);
+    if (!functionPtr) {
+      throw new Error(`Function "${functionName}" is not defined in QuickJS global scope`);
+    }
+    const argHandles = [];
     try {
-      module._qjs_init_runtime();
-      const functionName = decodeUtf8(namePtr, nameLen);
-      const argsJson = decodeUtf8(argsPtr, argsLen);
-      const parsedArgs = JSON.parse(argsJson || "[]");
-      if (!Array.isArray(parsedArgs)) {
-        throw new Error("callFunction expects JSON array arguments");
+      for (const value of argValues ?? []) {
+        argHandles.push(toQuickJsValue(value));
       }
-      const globalPtr = getGlobalObject();
-      const nameHandle = allocJsString(functionName);
-      const functionPtr = ffi.QTS_GetProp(contextPtr, globalPtr, nameHandle);
-      ffi.QTS_FreeValuePointer(contextPtr, nameHandle);
-      if (!functionPtr) {
-        throw new Error(`Function "${functionName}" is not defined in QuickJS global scope`);
-      }
-      const argHandles = parsedArgs.map((value) => toQuickJsValue(value));
       const argsBuffer = allocArgsPointer(argHandles);
-      const resultPtr = ffi.QTS_Call(contextPtr, functionPtr, globalPtr, argHandles.length, argsBuffer);
-      module._free(argsBuffer);
+      try {
+        const resultPtr = ffi.QTS_Call(
+          contextPtr,
+          functionPtr,
+          globalPtr,
+          argHandles.length,
+          argsBuffer
+        );
+        return handleQuickJsResult(resultPtr, `callFunction(${functionName})`);
+      } finally {
+        if (argsBuffer) {
+          module._free(argsBuffer);
+        }
+      }
+    } finally {
       argHandles.forEach((handle) => ffi.QTS_FreeValuePointer(contextPtr, handle));
       ffi.QTS_FreeValuePointer(contextPtr, functionPtr);
-      return handleQuickJsResult(resultPtr, `callFunction(${functionName})`);
-    } catch (error) {
-      storeLastResultString(JSON.stringify({ error: String(error?.message ?? error) }));
-      return 1;
     }
-  };
-
-  module._qjs_get_last_result_ptr = function getLastResultPtr() {
-    return readMetadata(METADATA_INDEX.lastResultPtr);
-  };
-
-  module._qjs_get_last_result_len = function getLastResultLen() {
-    return readMetadata(METADATA_INDEX.lastResultLen);
   };
 
   module._qjs_post_restore = function postRestore() {
@@ -374,8 +539,6 @@ function augmentModule(module) {
     locateMetadata();
     runtimePtr = readMetadata(METADATA_INDEX.runtimePtr);
     contextPtr = readMetadata(METADATA_INDEX.contextPtr);
-    lastResultPtr = readMetadata(METADATA_INDEX.lastResultPtr);
-    lastResultLen = readMetadata(METADATA_INDEX.lastResultLen);
     resetCachedHandles();
     return 0;
   };

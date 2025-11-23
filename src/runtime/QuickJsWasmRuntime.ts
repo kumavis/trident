@@ -1,8 +1,8 @@
 import { loadQuickJsModule } from "./loadQuickJsModule.ts";
 import type { QuickJsModule } from "./loadQuickJsModule.ts";
+import type { QuickJsValue } from "../types.ts";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 interface QuickJsRuntimeCreateOptions {
   initializeRuntime?: boolean;
@@ -47,25 +47,15 @@ export class QuickJsWasmRuntime {
     }
   }
 
-  evalUtf8(source: string): string {
+  evalUtf8(source: string): QuickJsValue {
     return this.invokeWithString(source, (ptr, len) => {
-      const errorCode = this.module._qjs_eval_utf8(ptr, len);
-      if (errorCode !== 0) {
-        throw new Error(this.readLastResult());
-      }
-      return this.readLastResult();
+      return this.module._qjs_eval_utf8(ptr, len);
     });
   }
 
-  callFunctionUtf8(functionName: string, argsJson: string): string {
+  callFunctionUtf8(functionName: string, args: QuickJsValue[]): QuickJsValue {
     return this.invokeWithString(functionName, (namePtr, nameLen) =>
-      this.invokeWithString(argsJson, (argsPtr, argsLen) => {
-        const errorCode = this.module._qjs_call_function(namePtr, nameLen, argsPtr, argsLen);
-        if (errorCode !== 0) {
-          throw new Error(this.readLastResult());
-        }
-        return this.readLastResult();
-      })
+      this.module._qjs_call_function(namePtr, nameLen, args)
     );
   }
 
@@ -85,14 +75,5 @@ export class QuickJsWasmRuntime {
     return { ptr, len: bytes.length };
   }
 
-  private readLastResult(): string {
-    const ptr = this.module._qjs_get_last_result_ptr();
-    const len = this.module._qjs_get_last_result_len();
-    if (len === 0) {
-      return "";
-    }
-    const bytes = this.module.HEAPU8.subarray(ptr, ptr + len);
-    return decoder.decode(bytes);
-  }
 }
 

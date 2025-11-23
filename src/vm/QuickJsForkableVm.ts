@@ -18,18 +18,11 @@ export class QuickJsForkableVm implements ForkableVm {
   }
 
   eval(code: string): QuickJsValue {
-    return this.withExclusiveAccessSync(() => {
-      const json = this.runtime.evalUtf8(code);
-      return this.parseQuickJsValue(json);
-    });
+    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8(code));
   }
 
   callFunction(name: string, ...args: QuickJsValue[]): QuickJsValue {
-    return this.withExclusiveAccessSync(() => {
-      const argsJson = JSON.stringify(args);
-      const json = this.runtime.callFunctionUtf8(name, argsJson);
-      return this.parseQuickJsValue(json);
-    });
+    return this.withExclusiveAccessSync(() => this.runtime.callFunctionUtf8(name, args));
   }
 
   async fork(): Promise<ForkableVm> {
@@ -79,11 +72,5 @@ export class QuickJsForkableVm implements ForkableVm {
     }
   }
 
-  private parseQuickJsValue(json: string): QuickJsValue {
-    if (!json) {
-      return null;
-    }
-    return JSON.parse(json) as QuickJsValue;
-  }
 }
 

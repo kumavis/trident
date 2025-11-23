@@ -58,6 +58,42 @@ export const vmBasicTestCases: VmTestCase[] = [
     },
   },
   {
+    name: "evaluates methods defined on objects",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const result = vm.eval(`
+          const math = {
+            add(a, b) {
+              return a + b;
+            },
+          };
+          math.add(40, 2);
+        `);
+        ensureNumber(result, 42, "object method");
+      });
+    },
+  },
+  {
+    name: "returns QuickJS object proxies with callable methods",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        const math = vm.eval(`
+          ({
+            base: 40,
+            add(a) {
+              return this.base + a;
+            },
+          })
+        `) as { add: (value: number) => number; base: number };
+        if (typeof math !== "object" || math === null) {
+          throw new Error("expected math proxy object");
+        }
+        const value = math.add(2);
+        ensureNumber(value, 42, "proxy method invocation");
+      });
+    },
+  },
+  {
     name: "callFunction invokes exported global functions",
     async run() {
       await usingVm(() => createForkableVm(), (vm) => {

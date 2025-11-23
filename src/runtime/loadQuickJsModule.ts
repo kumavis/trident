@@ -1,3 +1,5 @@
+import type { QuickJsValue } from "../types.ts";
+
 export interface QuickJsModule {
   HEAP8: Int8Array;
   HEAPU8: Uint8Array;
@@ -5,10 +7,8 @@ export interface QuickJsModule {
   _malloc(size: number): number;
   _free(ptr: number): void;
   _qjs_init_runtime(): void;
-  _qjs_eval_utf8(ptr: number, len: number): number;
-  _qjs_call_function(namePtr: number, nameLen: number, argsPtr: number, argsLen: number): number;
-  _qjs_get_last_result_ptr(): number;
-  _qjs_get_last_result_len(): number;
+  _qjs_eval_utf8(ptr: number, len: number): QuickJsValue;
+  _qjs_call_function(namePtr: number, nameLen: number, args: QuickJsValue[]): QuickJsValue;
   _qjs_post_restore?(): void;
 }
 

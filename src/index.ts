@@ -2,7 +2,7 @@ import { QuickJsForkableVm } from "./vm/QuickJsForkableVm.ts";
 import type { CreateVmOptions, ForkableVm } from "./types.ts";
 
 export { QuickJsWasmRuntime } from "./runtime/QuickJsWasmRuntime.ts";
-export type { QuickJsValue, ForkableVm, CreateVmOptions } from "./types.ts";
+export type { QuickJsValue, QuickJsFunction, QuickJsObject, ForkableVm, CreateVmOptions } from "./types.ts";
 
 export async function createForkableVm(options: CreateVmOptions = {}): Promise<ForkableVm> {
   return QuickJsForkableVm.create(options);
