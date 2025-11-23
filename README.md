@@ -6,8 +6,9 @@ Forkable QuickJS WebAssembly runtime that works the same in Node and modern brow
 
 ## Features
 - `createForkableVm()` for evaluating scripts, calling exported globals, and disposing deterministically.
-- `fork()` snapshots the parent VM’s memory so children inherit identical state but diverge independently.
+- `fork()` snapshots the parent VM's memory so children inherit identical state but diverge independently.
 - `createPreloadedVm()` runs bootstrap code exactly once before you start issuing calls.
+- `maxCycles` option to prevent infinite loops and limit execution time without code transforms.
 
 ## Usage
 
@@ -85,6 +86,69 @@ vm.eval("globalThis.times = (a, b) => a * b; 0;");
 const result = vm.callFunction("times", 6, 7); // 42
 vm.dispose();
 ```
+
+### Metering (prevent infinite loops)
+```ts
+// Create a VM with a limit of 1000 interrupt cycles per call
+const vm = await createForkableVm({ maxCycles: 1000 });
+
+// Simple evaluations work fine
+const result = vm.eval("1 + 2"); // 3
+
+// Infinite loops are automatically interrupted
+try {
+  vm.eval("while (true) {}");
+} catch (e) {
+  console.log("Interrupted:", e.message);
+}
+
+vm.dispose();
+```
+
+The cycle counter resets for each `eval()` or `callFunction()` call.
+
+
+You can also fork with different metering limits:
+```ts
+const parent = await createForkableVm({ maxCycles: 1000 });
+
+// Fork inherits parent's limit (1000)
+const child1 = await parent.fork();
+
+// Fork with different limit
+const child2 = await parent.fork({ maxCycles: 5000 });
+const child3 = await parent.fork({ maxCycles: 100 });
+```
+
+### Per-call Cycle Budgets
+
+Override the VM's default cycle limit for specific evaluations:
+
+```ts
+const vm = await createForkableVm({ maxCycles: 100 });
+
+// Use default limit (100 cycles per call)
+vm.eval("1 + 2");
+
+// Override with higher limit for this specific call
+vm.eval("for (let i = 0; i < 1000; i++) {}", { maxCycles: 10000 });
+```
+
+Use `evalWithMetrics()` to get cycle counts:
+
+```ts
+const vm = await createForkableVm({ maxCycles: 10000 });
+const { result, cycleCount } = vm.evalWithMetrics("1 + 2");
+console.log(`Result: ${result}, Cycles: ${cycleCount}`);
+
+// Compare cycle counts for different operations
+const simple = vm.evalWithMetrics("1 + 2");
+const loop = vm.evalWithMetrics("for (let i = 0; i < 100; i++) {}");
+console.log(`Simple: ${simple.cycleCount}, Loop: ${loop.cycleCount}`);
+```
+
+See `tests/shared/vm-cycle-counts.ts` for examples with exact cycle counts for various operations.
+
 
 ### Preload & fork VM state
 ```ts

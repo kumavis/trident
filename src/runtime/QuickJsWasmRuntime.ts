@@ -1,4 +1,4 @@
-import { loadQuickJsModule } from "./loadQuickJsModule.ts";
+import { loadQuickJsModule, runtimeInterruptState } from "./loadQuickJsModule.ts";
 import type { QuickJsModule } from "./loadQuickJsModule.ts";
 import type { QuickJsValue } from "../types.ts";
 
@@ -6,13 +6,17 @@ const encoder = new TextEncoder();
 
 interface QuickJsRuntimeCreateOptions {
   initializeRuntime?: boolean;
+  maxCycles?: number;
 }
 
 export class QuickJsWasmRuntime {
   private readonly module: QuickJsModule;
+  private readonly maxCycles: number | undefined;
+  private runtimePtr: number = 0;
 
-  private constructor(module: QuickJsModule) {
+  private constructor(module: QuickJsModule, maxCycles?: number) {
     this.module = module;
+    this.maxCycles = maxCycles;
   }
 
   static async create(
@@ -22,7 +26,23 @@ export class QuickJsWasmRuntime {
     if (options.initializeRuntime !== false) {
       quickJsModule._qjs_init_runtime();
     }
-    return new QuickJsWasmRuntime(quickJsModule);
+    const runtime = new QuickJsWasmRuntime(quickJsModule, options.maxCycles);
+    
+    // Get the runtime pointer and set up interrupt handler
+    runtime.runtimePtr = quickJsModule._qjs_get_runtime_ptr();
+    
+    // Always initialize interrupt state for cycle tracking
+    runtimeInterruptState.set(runtime.runtimePtr, {
+      counter: 0,
+      limit: options.maxCycles ?? Infinity,
+    });
+    
+    // Only enable interrupt handler if we have a limit
+    if (options.maxCycles !== undefined) {
+      quickJsModule._QTS_RuntimeEnableInterruptHandler(runtime.runtimePtr);
+    }
+    
+    return runtime;
   }
 
   getMemoryView(): Uint8Array {
@@ -47,16 +67,46 @@ export class QuickJsWasmRuntime {
     }
   }
 
-  evalUtf8(source: string): QuickJsValue {
-    return this.invokeWithString(source, (ptr, len) => {
-      return this.module._qjs_eval_utf8(ptr, len);
-    });
+  evalUtf8(source: string, callMaxCycles?: number): QuickJsValue {
+    const { result } = this.evalUtf8WithMetrics(source, callMaxCycles);
+    return result;
   }
 
-  callFunctionUtf8(functionName: string, args: QuickJsValue[]): QuickJsValue {
-    return this.invokeWithString(functionName, (namePtr, nameLen) =>
+  evalUtf8WithMetrics(source: string, callMaxCycles?: number): { result: QuickJsValue; cycleCount: number } {
+    // Reset interrupt counter and set limit before each eval
+    const state = runtimeInterruptState.get(this.runtimePtr);
+    if (state) {
+      state.counter = 0;
+      state.limit = callMaxCycles ?? this.maxCycles ?? Infinity;
+    }
+    
+    const result = this.invokeWithString(source, (ptr, len) => {
+      return this.module._qjs_eval_utf8(ptr, len);
+    });
+    
+    const cycleCount = state ? state.counter : 0;
+    return { result, cycleCount };
+  }
+
+  callFunctionUtf8(functionName: string, args: QuickJsValue[], callMaxCycles?: number): QuickJsValue {
+    const { result } = this.callFunctionUtf8WithMetrics(functionName, args, callMaxCycles);
+    return result;
+  }
+
+  callFunctionUtf8WithMetrics(functionName: string, args: QuickJsValue[], callMaxCycles?: number): { result: QuickJsValue; cycleCount: number } {
+    // Reset interrupt counter and set limit before each function call
+    const state = runtimeInterruptState.get(this.runtimePtr);
+    if (state) {
+      state.counter = 0;
+      state.limit = callMaxCycles ?? this.maxCycles ?? Infinity;
+    }
+    
+    const result = this.invokeWithString(functionName, (namePtr, nameLen) =>
       this.module._qjs_call_function(namePtr, nameLen, args)
     );
+    
+    const cycleCount = state ? state.counter : 0;
+    return { result, cycleCount };
   }
 
   private invokeWithString<T>(value: string, fn: (ptr: number, len: number) => T): T {

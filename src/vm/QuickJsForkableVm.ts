@@ -1,5 +1,5 @@
 import { QuickJsWasmRuntime } from "../runtime/QuickJsWasmRuntime.ts";
-import type { CreateVmOptions, ForkableVm, QuickJsObject, QuickJsValue } from "../types.ts";
+import type { CreateVmOptions, EvalOptions, EvalResult, ForkOptions, ForkableVm, QuickJsObject, QuickJsValue } from "../types.ts";
 
 export class QuickJsForkableVm implements ForkableVm {
   private busy = false;
@@ -13,7 +13,9 @@ export class QuickJsForkableVm implements ForkableVm {
   }
 
   static async create(options: CreateVmOptions = {}): Promise<QuickJsForkableVm> {
-    const runtime = await QuickJsWasmRuntime.create();
+    const runtime = await QuickJsWasmRuntime.create({
+      maxCycles: options.maxCycles,
+    });
     return new QuickJsForkableVm(runtime, options);
   }
 
@@ -21,20 +23,36 @@ export class QuickJsForkableVm implements ForkableVm {
     return this.withExclusiveAccessSync(() => this.runtime.evalUtf8("globalThis") as QuickJsObject);
   }
 
-  eval(code: string): QuickJsValue {
-    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8(code));
+  eval(code: string, options?: EvalOptions): QuickJsValue {
+    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8(code, options?.maxCycles));
+  }
+
+  evalWithMetrics(code: string, options?: EvalOptions): EvalResult {
+    return this.withExclusiveAccessSync(() => this.runtime.evalUtf8WithMetrics(code, options?.maxCycles));
   }
 
   callFunction(name: string, ...args: QuickJsValue[]): QuickJsValue {
     return this.withExclusiveAccessSync(() => this.runtime.callFunctionUtf8(name, args));
   }
 
-  async fork(): Promise<ForkableVm> {
+  callFunctionWithMetrics(name: string, ...args: QuickJsValue[]): EvalResult {
+    return this.withExclusiveAccessSync(() => this.runtime.callFunctionUtf8WithMetrics(name, args));
+  }
+
+  async fork(options?: ForkOptions): Promise<ForkableVm> {
     return this.withExclusiveAccessAsync(async () => {
       const snapshot = this.runtime.takeSnapshot();
-      const childRuntime = await QuickJsWasmRuntime.create({ initializeRuntime: false });
+      const childMaxCycles = options?.maxCycles !== undefined ? options.maxCycles : this.options.maxCycles;
+      const childRuntime = await QuickJsWasmRuntime.create({
+        initializeRuntime: false,
+        maxCycles: childMaxCycles,
+      });
       childRuntime.restoreSnapshot(snapshot);
-      return new QuickJsForkableVm(childRuntime, this.options);
+      const childOptions: CreateVmOptions = {
+        ...this.options,
+        maxCycles: childMaxCycles,
+      };
+      return new QuickJsForkableVm(childRuntime, childOptions);
     });
   }
 
