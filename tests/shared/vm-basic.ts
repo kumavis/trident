@@ -177,6 +177,24 @@ export const vmBasicTestCases: VmTestCase[] = [
     },
   },
   {
+    name: "Object.defineProperty syncs with QuickJS objects",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        vm.eval("globalThis.target = { existing: 1 }; 0;");
+        const proxy = vm.eval("globalThis.target") as Record<string, unknown>;
+        assertType(proxy, isObjectLike, "target proxy", "expected QuickJS proxy object");
+        Object.defineProperty(proxy, "xyz", {
+          value: 99,
+          enumerable: true,
+          configurable: true,
+        });
+        assertNumber(proxy.xyz as number, 99, "host defineProperty reflects value");
+        const vmValue = vm.eval("globalThis.target.xyz");
+        assertNumber(vmValue, 99, "QuickJS target receives property");
+      });
+    },
+  },
+  {
     name: "callFunction works even after switching between VM instances",
     async run() {
       const firstVm = await createForkableVm();

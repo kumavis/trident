@@ -261,6 +261,80 @@ function augmentModule(module) {
     }
   }
 
+  function getQuickJsGlobalProperty(propertyName) {
+    const keyPtr = allocJsString(propertyName);
+    try {
+      const valuePtr = ffi.QTS_GetProp(contextPtr, getGlobalObject(), keyPtr);
+      if (!valuePtr) {
+        throw new Error(`QuickJS global property "${propertyName}" is not defined`);
+      }
+      return valuePtr;
+    } finally {
+      ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
+    }
+  }
+
+  function getQuickJsObjectProperty(objectPtr, propertyName) {
+    const keyPtr = allocJsString(propertyName);
+    try {
+      const valuePtr = ffi.QTS_GetProp(contextPtr, objectPtr, keyPtr);
+      if (!valuePtr) {
+        throw new Error(`QuickJS property "${propertyName}" is not defined`);
+      }
+      return valuePtr;
+    } finally {
+      ffi.QTS_FreeValuePointer(contextPtr, keyPtr);
+    }
+  }
+
+  function defineQuickJsProperty(handle, key, descriptor) {
+    if (descriptor === null || typeof descriptor !== "object") {
+      throw new TypeError("property descriptor must be an object");
+    }
+    if ("get" in descriptor || "set" in descriptor) {
+      throw new TypeError("QuickJS proxies do not support accessor descriptors");
+    }
+    const normalizedDescriptor = {
+      configurable: Boolean(descriptor.configurable),
+      enumerable: Boolean(descriptor.enumerable),
+    };
+    if ("value" in descriptor) {
+      normalizedDescriptor.value = descriptor.value;
+    }
+    if ("writable" in descriptor || "value" in descriptor) {
+      normalizedDescriptor.writable = Boolean(descriptor.writable);
+    }
+    const descriptorPtr = toQuickJsValue(normalizedDescriptor);
+    const keyPtr = toQuickJsValue(key);
+    const targetPtr = ffi.QTS_DupValuePointer(contextPtr, handle.ptr);
+    const reflectPtr = getQuickJsGlobalProperty("Reflect");
+    const definePtr = getQuickJsObjectProperty(reflectPtr, "defineProperty");
+    const argHandles = [targetPtr, keyPtr, descriptorPtr];
+    let argsBuffer = 0;
+    try {
+      argsBuffer = allocArgsPointer(argHandles);
+      const resultPtr = ffi.QTS_Call(
+        contextPtr,
+        definePtr,
+        reflectPtr,
+        argHandles.length,
+        argsBuffer
+      );
+      const result = handleQuickJsResult(resultPtr, `Reflect.defineProperty("${key}")`);
+      if (result !== true) {
+        throw new Error(`Reflect.defineProperty("${key}") returned ${String(result)}`);
+      }
+      return true;
+    } finally {
+      if (argsBuffer) {
+        module._free(argsBuffer);
+      }
+      argHandles.forEach((handlePtr) => ffi.QTS_FreeValuePointer(contextPtr, handlePtr));
+      ffi.QTS_FreeValuePointer(contextPtr, definePtr);
+      ffi.QTS_FreeValuePointer(contextPtr, reflectPtr);
+    }
+  }
+
   function getQuickJsArrayLength(handle) {
     const lengthPtr = module._malloc(4);
     try {
@@ -398,6 +472,13 @@ function augmentModule(module) {
           value,
           writable: true,
         };
+      },
+      defineProperty(_target, prop, descriptor) {
+        const key = normalizePropertyKey(prop);
+        if (key === null) {
+          throw new TypeError("QuickJS proxies only support string or number property keys");
+        }
+        return defineQuickJsProperty(handle, key, descriptor);
       },
     };
   }
