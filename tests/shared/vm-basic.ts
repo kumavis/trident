@@ -232,4 +232,55 @@ export const vmBasicTestCases: VmTestCase[] = [
       }
     },
   },
+  {
+    name: "guest code calls host function via globalThis",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        // Create a host callback and attach it to globalThis
+        const capturedArgs: unknown[] = [];
+        const vmGlobalThis = vm.globalThis as { 
+          hostCallback?: (...args: unknown[]) => number;
+        };
+        vmGlobalThis.hostCallback = (...args: unknown[]) => {
+          capturedArgs.push(...args);
+          return args.length;
+        };
+        
+        // Guest code calls the host function
+        const result = vm.eval(`
+          globalThis.hostCallback('hello', 42, true);
+        `);
+        
+        assertNumber(result, 3, "callback return value");
+        assertJsonEqual(capturedArgs, ['hello', 42, true], "callback received arguments");
+      });
+    },
+  },
+  {
+    name: "guest code calls host function passed as argument",
+    async run() {
+      await usingVm(() => createForkableVm(), (vm) => {
+        // Define a guest function that accepts a callback
+        vm.eval(`
+          globalThis.doThing = (value, callback) => {
+            const result = callback('hello', value, true);
+            return result;
+          };
+        `);
+        
+        // Create a host callback to pass to the guest function
+        const capturedArgs: unknown[] = [];
+        const hostCallback = (...args: unknown[]) => {
+          capturedArgs.push(...args);
+          return args.length;
+        };
+        
+        // Call guest function and pass host callback as argument
+        const result = vm.callFunction('doThing', 123, hostCallback);
+        
+        assertNumber(result, 3, "callback return value");
+        assertJsonEqual(capturedArgs, ['hello', 123, true], "callback received arguments");
+      });
+    },
+  },
 ];
