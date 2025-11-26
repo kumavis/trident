@@ -65,6 +65,10 @@ function augmentModule(module) {
             handle.ptr = 0;
           }
         });
+  
+  // Host function registry for wrapping JavaScript functions
+  const hostFunctionRegistry = new Map();
+  let nextFunctionId = 1;
 
   function ensureFFI() {
     if (!ffi) {
@@ -585,6 +589,39 @@ function augmentModule(module) {
     return message;
   }
 
+  function registerHostFunction(func) {
+    const id = nextFunctionId++;
+    hostFunctionRegistry.set(id, func);
+    return id;
+  }
+
+  // Quickjs does not currently report GC of host objects
+  function unregisterHostFunction(id) {
+    hostFunctionRegistry.delete(id);
+  }
+  
+  function wrapHostFunction(hostFunc) {
+    // Check if QTS_NewFunction is available
+    if (typeof ffi.QTS_NewFunction !== 'function') {
+      throw new Error('QTS_NewFunction is not available in this QuickJS build. Host function callbacks are not supported.');
+    }
+    
+    // Register the function and get an ID
+    const funcId = registerHostFunction(hostFunc);
+    
+    // Create a QuickJS function linked to this ID
+    const funcName = hostFunc.name || `hostFunc_${funcId}`;
+    const namePtr = allocJsString(funcName);
+    
+    try {
+      const funcPtr = ffi.QTS_NewFunction(contextPtr, funcId, namePtr);
+      return funcPtr;
+    } finally {
+      // Free the name string
+      ffi.QTS_FreeCString(contextPtr, namePtr);
+    }
+  }
+
   function toQuickJsValue(value) {
     if (value === undefined) {
       return ffi.QTS_DupValuePointer(contextPtr, ffi.QTS_GetUndefined());
@@ -607,7 +644,8 @@ function augmentModule(module) {
       if (proxyPtr) {
         return proxyPtr;
       }
-      throw new Error("Passing host functions into QuickJS is not supported");
+      // Wrap the host function so it can be called from QuickJS
+      return wrapHostFunction(value);
     }
     if (Array.isArray(value)) {
       const arrayPtr = ffi.QTS_NewArray(contextPtr);
@@ -625,6 +663,8 @@ function augmentModule(module) {
       if (proxyPtr) {
         return proxyPtr;
       }
+      // Create a new QuickJS object by copying properties
+      // Note: This means modifications in QuickJS won't affect the original host object
       const objectPtr = ffi.QTS_NewObject(contextPtr);
       Object.keys(value).forEach((key) => {
         const propertyPtr = toQuickJsValue(value[key]);
@@ -738,5 +778,51 @@ function augmentModule(module) {
     module._qjs_init_runtime();
     return runtimePtr;
   };
+
+  // Host function callback handler - called from WASM when a host function is invoked
+  // Signature from WASM: (undefined, contextPtr, thisPtr, argc, argv, funcId)
+  const hostFunctionCallbackHandler = function(_unused, callbackContextPtr, thisPtr, argc, argv, funcId) {
+    // Ensure FFI and runtime are initialized
+    module._qjs_init_runtime();
+    
+    const func = hostFunctionRegistry.get(funcId);
+    if (!func) {
+      // Return an exception
+      const errorMsg = `Host function ${funcId} not found in registry`;
+      const errorPtr = ffi.QTS_NewError(contextPtr);
+      const errorMsgPtr = allocJsString(errorMsg);
+      ffi.QTS_Throw(contextPtr, errorMsgPtr);
+      ffi.QTS_FreeValuePointer(contextPtr, errorMsgPtr);
+      return errorPtr;
+    }
+
+    try {
+      // Convert QuickJS arguments to JavaScript values
+      const args = [];
+      for (let i = 0; i < argc; i++) {
+        const argPtr = ffi.QTS_ArgvGetJSValueConstPointer(argv, i);
+        args.push(fromQuickJsValue(argPtr));
+      }
+      
+      // Call the host function
+      const result = func(...args);
+      
+      // Convert the result back to a QuickJS value
+      return toQuickJsValue(result);
+    } catch (error) {
+      // Convert JavaScript exceptions to QuickJS exceptions
+      const errorMsg = error?.message ?? String(error);
+      const errorPtr = ffi.QTS_NewError(contextPtr);
+      const errorMsgPtr = allocJsString(errorMsg);
+      ffi.QTS_Throw(contextPtr, errorMsgPtr);
+      ffi.QTS_FreeValuePointer(contextPtr, errorMsgPtr);
+      return errorPtr;
+    }
+  };
+  
+  // Register the handler globally so the callback can find it
+  globalThis.__trident_host_function_callback = hostFunctionCallbackHandler;
+  
+  module._qjs_host_function_callback = hostFunctionCallbackHandler;
 }
 

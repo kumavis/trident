@@ -12,7 +12,13 @@ async function loadQuickJsModule() {
   const factory = await importQuickJsModuleFactory();
   const imports = {
     callbacks: {
-      shouldInterrupt: globalShouldInterrupt
+      shouldInterrupt: globalShouldInterrupt,
+      callFunction: (...args) => {
+        if (typeof globalThis.__trident_host_function_callback === "function") {
+          return globalThis.__trident_host_function_callback(...args);
+        }
+        throw new Error("Host function callback handler not initialized");
+      }
     }
   };
   return factory(imports);
